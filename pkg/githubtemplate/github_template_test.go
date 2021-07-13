@@ -250,10 +250,10 @@ func TestFindLegacy(t *testing.T) {
 			}
 
 			got := FindLegacy(tt.args.rootDir, tt.args.name)
-			if got == nil {
+			if got == "" {
 				t.Errorf("FindLegacy() = nil, want %v", tt.want)
-			} else if *got != tt.want {
-				t.Errorf("FindLegacy() = %v, want %v", *got, tt.want)
+			} else if got != tt.want {
+				t.Errorf("FindLegacy() = %v, want %v", got, tt.want)
 			}
 		})
 		os.RemoveAll(tmpdir)
@@ -261,12 +261,11 @@ func TestFindLegacy(t *testing.T) {
 }
 
 func TestExtractName(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "gh-cli")
+	tmpfile, err := ioutil.TempFile(t.TempDir(), "gh-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpfile.Close()
-	defer os.Remove(tmpfile.Name())
+	defer tmpfile.Close()
 
 	type args struct {
 		filePath string
@@ -322,12 +321,11 @@ about: This is how you report bugs
 }
 
 func TestExtractContents(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "gh-cli")
+	tmpfile, err := ioutil.TempFile(t.TempDir(), "gh-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpfile.Close()
-	defer os.Remove(tmpfile.Name())
+	defer tmpfile.Close()
 
 	type args struct {
 		filePath string

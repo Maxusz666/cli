@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-)
 
-const defaultHostname = "github.com"
+	"github.com/cli/cli/git"
+	"github.com/cli/cli/internal/ghinstance"
+)
 
 // Interface describes an object that represents a GitHub repository
 type Interface interface {
@@ -17,10 +18,7 @@ type Interface interface {
 
 // New instantiates a GitHub repository from owner and name arguments
 func New(owner, repo string) Interface {
-	return &ghRepo{
-		owner: owner,
-		name:  repo,
-	}
+	return NewWithHost(owner, repo, ghinstance.Default())
 }
 
 // NewWithHost is like New with an explicit host name
@@ -28,7 +26,7 @@ func NewWithHost(owner, repo, hostname string) Interface {
 	return &ghRepo{
 		owner:    owner,
 		name:     repo,
-		hostname: hostname,
+		hostname: normalizeHostname(hostname),
 	}
 }
 
@@ -37,15 +35,46 @@ func FullName(r Interface) string {
 	return fmt.Sprintf("%s/%s", r.RepoOwner(), r.RepoName())
 }
 
-// FromFullName extracts the GitHub repository information from an "OWNER/REPO" string
-func FromFullName(nwo string) (Interface, error) {
-	var r ghRepo
-	parts := strings.SplitN(nwo, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return &r, fmt.Errorf("expected OWNER/REPO format, got %q", nwo)
+var defaultHostOverride string
+
+func defaultHost() string {
+	if defaultHostOverride != "" {
+		return defaultHostOverride
 	}
-	r.owner, r.name = parts[0], parts[1]
-	return &r, nil
+	return ghinstance.Default()
+}
+
+// SetDefaultHost overrides the default GitHub hostname for FromFullName.
+// TODO: remove after FromFullName approach is revisited
+func SetDefaultHost(host string) {
+	defaultHostOverride = host
+}
+
+// FromFullName extracts the GitHub repository information from the following
+// formats: "OWNER/REPO", "HOST/OWNER/REPO", and a full URL.
+func FromFullName(nwo string) (Interface, error) {
+	if git.IsURL(nwo) {
+		u, err := git.ParseURL(nwo)
+		if err != nil {
+			return nil, err
+		}
+		return FromURL(u)
+	}
+
+	parts := strings.SplitN(nwo, "/", 4)
+	for _, p := range parts {
+		if len(p) == 0 {
+			return nil, fmt.Errorf(`expected the "[HOST/]OWNER/REPO" format, got %q`, nwo)
+		}
+	}
+	switch len(parts) {
+	case 3:
+		return NewWithHost(parts[1], parts[2], parts[0]), nil
+	case 2:
+		return NewWithHost(parts[0], parts[1], defaultHost()), nil
+	default:
+		return nil, fmt.Errorf(`expected the "[HOST/]OWNER/REPO" format, got %q`, nwo)
+	}
 }
 
 // FromURL extracts the GitHub repository information from a git remote URL
@@ -59,11 +88,7 @@ func FromURL(u *url.URL) (Interface, error) {
 		return nil, fmt.Errorf("invalid path: %s", u.Path)
 	}
 
-	return &ghRepo{
-		owner:    parts[0],
-		name:     strings.TrimSuffix(parts[1], ".git"),
-		hostname: normalizeHostname(u.Hostname()),
-	}, nil
+	return NewWithHost(parts[0], strings.TrimSuffix(parts[1], ".git"), u.Hostname()), nil
 }
 
 func normalizeHostname(h string) string {
@@ -109,8 +134,5 @@ func (r ghRepo) RepoName() string {
 }
 
 func (r ghRepo) RepoHost() string {
-	if r.hostname != "" {
-		return r.hostname
-	}
-	return defaultHostname
+	return r.hostname
 }

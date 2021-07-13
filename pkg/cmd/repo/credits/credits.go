@@ -45,10 +45,10 @@ func NewCmdCredits(f *cmdutil.Factory, runF func(*CreditsOptions) error) *cobra.
 		Example: heredoc.Doc(`
 			# see a credits animation for this project
 			$ gh credits
-			
+
 			# display a non-animated thank you
 			$ gh credits -s
-			
+
 			# just print the contributors, one per line
 			$ gh credits | cat
 		`),
@@ -120,34 +120,31 @@ func creditsRun(opts *CreditsOptions) error {
 
 	client := api.NewClientFromHTTP(httpClient)
 
-	var owner string
-	var repo string
-
+	var baseRepo ghrepo.Interface
 	if opts.Repository == "" {
-		baseRepo, err := opts.BaseRepo()
+		baseRepo, err = opts.BaseRepo()
 		if err != nil {
 			return err
 		}
-
-		owner = baseRepo.RepoOwner()
-		repo = baseRepo.RepoName()
 	} else {
-		parts := strings.SplitN(opts.Repository, "/", 2)
-		owner = parts[0]
-		repo = parts[1]
+		baseRepo, err = ghrepo.FromFullName(opts.Repository)
+		if err != nil {
+			return err
+		}
 	}
 
 	type Contributor struct {
 		Login string
+		Type  string
 	}
 
 	type Result []Contributor
 
 	result := Result{}
 	body := bytes.NewBufferString("")
-	path := fmt.Sprintf("repos/%s/%s/contributors", owner, repo)
+	path := fmt.Sprintf("repos/%s/%s/contributors", baseRepo.RepoOwner(), baseRepo.RepoName())
 
-	err = client.REST("GET", path, body, &result)
+	err = client.REST(baseRepo.RepoHost(), "GET", path, body, &result)
 	if err != nil {
 		return err
 	}
@@ -157,6 +154,7 @@ func creditsRun(opts *CreditsOptions) error {
 	static := opts.Static || isWindows
 
 	out := opts.IO.Out
+	cs := opts.IO.ColorScheme()
 
 	if isTTY && static {
 		fmt.Fprintln(out, "THANK YOU CONTRIBUTORS!!! <3")
@@ -165,8 +163,12 @@ func creditsRun(opts *CreditsOptions) error {
 
 	logins := []string{}
 	for x, c := range result {
+		if c.Type != "User" {
+			continue
+		}
+
 		if isTTY && !static {
-			logins = append(logins, getColor(x)(c.Login))
+			logins = append(logins, cs.ColorFromString(getColor(x))(c.Login))
 		} else {
 			fmt.Fprintf(out, "%s\n", c.Login)
 		}
@@ -182,14 +184,13 @@ func creditsRun(opts *CreditsOptions) error {
 
 	thankLines := strings.Split(thankYou, "\n")
 	for x, tl := range thankLines {
-		lines = append(lines, getColor(x)(tl))
+		lines = append(lines, cs.ColorFromString(getColor(x))(tl))
 	}
 	lines = append(lines, "")
 	lines = append(lines, logins...)
 	lines = append(lines, "( <3 press ctrl-c to quit <3 )")
 
 	termWidth, termHeight, err := utils.TerminalSize(out)
-	//termWidth, termHeight, err := terminal.GetSize(int(outFile.Fd()))
 	if err != nil {
 		return err
 	}
@@ -276,14 +277,14 @@ func twinkle(starLine string) string {
 	return starLine
 }
 
-func getColor(x int) func(string) string {
-	rainbow := []func(string) string{
-		utils.Magenta,
-		utils.Red,
-		utils.Yellow,
-		utils.Green,
-		utils.Cyan,
-		utils.Blue,
+func getColor(x int) string {
+	rainbow := []string{
+		"magenta",
+		"red",
+		"yellow",
+		"green",
+		"cyan",
+		"blue",
 	}
 
 	ix := x % len(rainbow)

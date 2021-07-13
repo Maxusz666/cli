@@ -1,6 +1,9 @@
 package api
 
 import (
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/cli/cli/internal/ghrepo"
@@ -138,6 +141,63 @@ func Test_RepoMetadata(t *testing.T) {
 	}
 }
 
+func Test_ProjectsToPaths(t *testing.T) {
+	expectedProjectPaths := []string{"OWNER/REPO/PROJECT_NUMBER", "ORG/PROJECT_NUMBER"}
+	projects := []RepoProject{
+		{ID: "id1", Name: "My Project", ResourcePath: "/OWNER/REPO/projects/PROJECT_NUMBER"},
+		{ID: "id2", Name: "Org Project", ResourcePath: "/orgs/ORG/projects/PROJECT_NUMBER"},
+		{ID: "id3", Name: "Project", ResourcePath: "/orgs/ORG/projects/PROJECT_NUMBER_2"},
+	}
+	projectNames := []string{"My Project", "Org Project"}
+
+	projectPaths, err := ProjectsToPaths(projects, projectNames)
+	if err != nil {
+		t.Errorf("error resolving projects: %v", err)
+	}
+	if !sliceEqual(projectPaths, expectedProjectPaths) {
+		t.Errorf("expected projects %v, got %v", expectedProjectPaths, projectPaths)
+	}
+}
+
+func Test_ProjectNamesToPaths(t *testing.T) {
+	http := &httpmock.Registry{}
+	client := NewClient(ReplaceTripper(http))
+
+	repo, _ := ghrepo.FromFullName("OWNER/REPO")
+
+	http.Register(
+		httpmock.GraphQL(`query RepositoryProjectList\b`),
+		httpmock.StringResponse(`
+		{ "data": { "repository": { "projects": {
+			"nodes": [
+				{ "name": "Cleanup", "id": "CLEANUPID", "resourcePath": "/OWNER/REPO/projects/1" },
+				{ "name": "Roadmap", "id": "ROADMAPID", "resourcePath": "/OWNER/REPO/projects/2" }
+			],
+			"pageInfo": { "hasNextPage": false }
+		} } } }
+		`))
+	http.Register(
+		httpmock.GraphQL(`query OrganizationProjectList\b`),
+		httpmock.StringResponse(`
+			{ "data": { "organization": { "projects": {
+				"nodes": [
+					{ "name": "Triage", "id": "TRIAGEID", "resourcePath": "/orgs/ORG/projects/1"  }
+				],
+				"pageInfo": { "hasNextPage": false }
+			} } } }
+			`))
+
+	projectPaths, err := ProjectNamesToPaths(client, repo, []string{"Triage", "Roadmap"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expectedProjectPaths := []string{"ORG/1", "OWNER/REPO/2"}
+	if !sliceEqual(projectPaths, expectedProjectPaths) {
+		t.Errorf("expected projects paths %v, got %v", expectedProjectPaths, projectPaths)
+	}
+}
+
 func Test_RepoResolveMetadataIDs(t *testing.T) {
 	http := &httpmock.Registry{}
 	client := NewClient(ReplaceTripper(http))
@@ -232,4 +292,52 @@ func sliceEqual(a, b []string) bool {
 	}
 
 	return true
+}
+
+func Test_RepoMilestones(t *testing.T) {
+	tests := []struct {
+		state   string
+		want    string
+		wantErr bool
+	}{
+		{
+			state: "open",
+			want:  `"states":["OPEN"]`,
+		},
+		{
+			state: "closed",
+			want:  `"states":["CLOSED"]`,
+		},
+		{
+			state: "all",
+			want:  `"states":["OPEN","CLOSED"]`,
+		},
+		{
+			state:   "invalid state",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		var query string
+		reg := &httpmock.Registry{}
+		reg.Register(httpmock.MatchAny, func(req *http.Request) (*http.Response, error) {
+			buf := new(strings.Builder)
+			_, err := io.Copy(buf, req.Body)
+			if err != nil {
+				return nil, err
+			}
+			query = buf.String()
+			return httpmock.StringResponse("{}")(req)
+		})
+		client := NewClient(ReplaceTripper(reg))
+
+		_, err := RepoMilestones(client, ghrepo.New("OWNER", "REPO"), tt.state)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("RepoMilestones() error = %v, wantErr %v", err, tt.wantErr)
+			return
+		}
+		if !strings.Contains(query, tt.want) {
+			t.Errorf("query does not contain %v", tt.want)
+		}
+	}
 }

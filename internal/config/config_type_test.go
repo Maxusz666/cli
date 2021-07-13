@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/MakeNowJust/heredoc"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,8 +20,8 @@ func Test_fileConfig_Set(t *testing.T) {
 	assert.NoError(t, c.Set("github.com", "user", "hubot"))
 	assert.NoError(t, c.Write())
 
-	expected := "# What protocol to use when performing git operations. Supported values: ssh, https\ngit_protocol: https\n# What editor gh should run when creating issues, pull requests, etc. If blank, will refer to environment.\neditor: nano\n# Aliases allow you to create nicknames for gh commands\naliases:\n    co: pr checkout\n"
-	assert.Equal(t, expected, mainBuf.String())
+	assert.Contains(t, mainBuf.String(), "editor: nano")
+	assert.Contains(t, mainBuf.String(), "git_protocol: https")
 	assert.Equal(t, `github.com:
     git_protocol: ssh
     user: hubot
@@ -37,21 +38,72 @@ func Test_defaultConfig(t *testing.T) {
 	cfg := NewBlankConfig()
 	assert.NoError(t, cfg.Write())
 
-	expected := "# What protocol to use when performing git operations. Supported values: ssh, https\ngit_protocol: https\n# What editor gh should run when creating issues, pull requests, etc. If blank, will refer to environment.\neditor:\n# Aliases allow you to create nicknames for gh commands\naliases:\n    co: pr checkout\n"
+	expected := heredoc.Doc(`
+		# What protocol to use when performing git operations. Supported values: ssh, https
+		git_protocol: https
+		# What editor gh should run when creating issues, pull requests, etc. If blank, will refer to environment.
+		editor:
+		# When to interactively prompt. This is a global config that cannot be overridden by hostname. Supported values: enabled, disabled
+		prompt: enabled
+		# A pager program to send command output to, e.g. "less". Set the value to "cat" to disable the pager.
+		pager:
+		# Aliases allow you to create nicknames for gh commands
+		aliases:
+		    co: pr checkout
+		# The path to a unix socket through which send HTTP connections. If blank, HTTP traffic will be handled by net/http.DefaultTransport.
+		http_unix_socket:
+	`)
 	assert.Equal(t, expected, mainBuf.String())
 	assert.Equal(t, "", hostsBuf.String())
 
 	proto, err := cfg.Get("", "git_protocol")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "https", proto)
 
 	editor, err := cfg.Get("", "editor")
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, "", editor)
 
 	aliases, err := cfg.Aliases()
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, len(aliases.All()), 1)
 	expansion, _ := aliases.Get("co")
 	assert.Equal(t, expansion, "pr checkout")
+}
+
+func Test_ValidateValue(t *testing.T) {
+	err := ValidateValue("git_protocol", "sshpps")
+	assert.EqualError(t, err, "invalid value")
+
+	err = ValidateValue("git_protocol", "ssh")
+	assert.NoError(t, err)
+
+	err = ValidateValue("editor", "vim")
+	assert.NoError(t, err)
+
+	err = ValidateValue("got", "123")
+	assert.NoError(t, err)
+
+	err = ValidateValue("http_unix_socket", "really_anything/is/allowed/and/net.Dial\\(...\\)/will/ultimately/validate")
+	assert.NoError(t, err)
+}
+
+func Test_ValidateKey(t *testing.T) {
+	err := ValidateKey("invalid")
+	assert.EqualError(t, err, "invalid key")
+
+	err = ValidateKey("git_protocol")
+	assert.NoError(t, err)
+
+	err = ValidateKey("editor")
+	assert.NoError(t, err)
+
+	err = ValidateKey("prompt")
+	assert.NoError(t, err)
+
+	err = ValidateKey("pager")
+	assert.NoError(t, err)
+
+	err = ValidateKey("http_unix_socket")
+	assert.NoError(t, err)
 }

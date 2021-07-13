@@ -8,25 +8,52 @@ import (
 	"github.com/AlecAivazis/survey/v2/core"
 )
 
-type askStubber struct {
-	Asks  [][]*survey.Question
-	Count int
-	Stubs [][]*QuestionStub
+type AskStubber struct {
+	Asks     [][]*survey.Question
+	AskOnes  []*survey.Prompt
+	Count    int
+	OneCount int
+	Stubs    [][]*QuestionStub
+	StubOnes []*PromptStub
 }
 
-func InitAskStubber() (*askStubber, func()) {
+func InitAskStubber() (*AskStubber, func()) {
 	origSurveyAsk := SurveyAsk
-	as := askStubber{}
+	origSurveyAskOne := SurveyAskOne
+	as := AskStubber{}
+
+	SurveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+		as.AskOnes = append(as.AskOnes, &p)
+		count := as.OneCount
+		as.OneCount += 1
+		if count >= len(as.StubOnes) {
+			panic(fmt.Sprintf("more asks than stubs. most recent call: %v", p))
+		}
+		stubbedPrompt := as.StubOnes[count]
+		if stubbedPrompt.Default {
+			// TODO this is failing for basic AskOne invocations with a string result.
+			defaultValue := reflect.ValueOf(p).Elem().FieldByName("Default")
+			_ = core.WriteAnswer(response, "", defaultValue)
+		} else {
+			_ = core.WriteAnswer(response, "", stubbedPrompt.Value)
+		}
+
+		return nil
+	}
+
 	SurveyAsk = func(qs []*survey.Question, response interface{}, opts ...survey.AskOpt) error {
 		as.Asks = append(as.Asks, qs)
 		count := as.Count
 		as.Count += 1
 		if count >= len(as.Stubs) {
-			panic(fmt.Sprintf("more asks than stubs. most recent call: %v", qs))
+			panic(fmt.Sprintf("more asks than stubs. most recent call: %#v", qs))
 		}
 
 		// actually set response
 		stubbedQuestions := as.Stubs[count]
+		if len(stubbedQuestions) != len(qs) {
+			panic(fmt.Sprintf("asked questions: %d; stubbed questions: %d", len(qs), len(stubbedQuestions)))
+		}
 		for i, sq := range stubbedQuestions {
 			q := qs[i]
 			if q.Name != sq.Name {
@@ -44,8 +71,14 @@ func InitAskStubber() (*askStubber, func()) {
 	}
 	teardown := func() {
 		SurveyAsk = origSurveyAsk
+		SurveyAskOne = origSurveyAskOne
 	}
 	return &as, teardown
+}
+
+type PromptStub struct {
+	Value   interface{}
+	Default bool
 }
 
 type QuestionStub struct {
@@ -54,7 +87,19 @@ type QuestionStub struct {
 	Default bool
 }
 
-func (as *askStubber) Stub(stubbedQuestions []*QuestionStub) {
+func (as *AskStubber) StubOne(value interface{}) {
+	as.StubOnes = append(as.StubOnes, &PromptStub{
+		Value: value,
+	})
+}
+
+func (as *AskStubber) StubOneDefault() {
+	as.StubOnes = append(as.StubOnes, &PromptStub{
+		Default: true,
+	})
+}
+
+func (as *AskStubber) Stub(stubbedQuestions []*QuestionStub) {
 	// A call to .Ask takes a list of questions; a stub is then a list of questions in the same order.
 	as.Stubs = append(as.Stubs, stubbedQuestions)
 }

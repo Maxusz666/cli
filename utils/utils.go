@@ -2,55 +2,16 @@ package utils
 
 import (
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/briandowns/spinner"
-	"github.com/charmbracelet/glamour"
-	"github.com/cli/cli/internal/run"
-	"github.com/cli/cli/pkg/browser"
 )
-
-// OpenInBrowser opens the url in a web browser based on OS and $BROWSER environment variable
-func OpenInBrowser(url string) error {
-	browseCmd, err := browser.Command(url)
-	if err != nil {
-		return err
-	}
-	return run.PrepareCmd(browseCmd).Run()
-}
-
-func RenderMarkdown(text string) (string, error) {
-	// Glamour rendering preserves carriage return characters in code blocks, but
-	// we need to ensure that no such characters are present in the output.
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-
-	renderStyle := glamour.WithStandardStyle("notty")
-	// TODO: make color an input parameter
-	if isColorEnabled() {
-		renderStyle = glamour.WithEnvironmentConfig()
-	}
-
-	tr, err := glamour.NewTermRenderer(
-		renderStyle,
-		// glamour.WithBaseURL(""),  // TODO: make configurable
-		// glamour.WithWordWrap(80), // TODO: make configurable
-	)
-	if err != nil {
-		return "", err
-	}
-
-	return tr.Render(text)
-}
 
 func Pluralize(num int, thing string) string {
 	if num == 1 {
 		return fmt.Sprintf("%d %s", num, thing)
-	} else {
-		return fmt.Sprintf("%d %ss", num, thing)
 	}
+	return fmt.Sprintf("%d %ss", num, thing)
 }
 
 func fmtDuration(amount int, unit string) string {
@@ -77,6 +38,22 @@ func FuzzyAgo(ago time.Duration) string {
 	return fmtDuration(int(ago.Hours()/24/365), "year")
 }
 
+func FuzzyAgoAbbr(now time.Time, createdAt time.Time) string {
+	ago := now.Sub(createdAt)
+
+	if ago < time.Hour {
+		return fmt.Sprintf("%d%s", int(ago.Minutes()), "m")
+	}
+	if ago < 24*time.Hour {
+		return fmt.Sprintf("%d%s", int(ago.Hours()), "h")
+	}
+	if ago < 30*24*time.Hour {
+		return fmt.Sprintf("%d%s", int(ago.Hours())/24, "d")
+	}
+
+	return createdAt.Format("Jan _2, 2006")
+}
+
 func Humanize(s string) string {
 	// Replaces - and _ with spaces.
 	replace := "_-"
@@ -90,20 +67,6 @@ func Humanize(s string) string {
 	return strings.Map(h, s)
 }
 
-// We do this so we can stub out the spinner in tests -- it made things really flakey. this is not
-// an elegant solution.
-var StartSpinner = func(s *spinner.Spinner) {
-	s.Start()
-}
-
-var StopSpinner = func(s *spinner.Spinner) {
-	s.Stop()
-}
-
-func Spinner(w io.Writer) *spinner.Spinner {
-	return spinner.New(spinner.CharSets[11], 400*time.Millisecond, spinner.WithWriter(w))
-}
-
 func IsURL(s string) bool {
 	return strings.HasPrefix(s, "http:/") || strings.HasPrefix(s, "https:/")
 }
@@ -114,4 +77,9 @@ func DisplayURL(urlStr string) string {
 		return urlStr
 	}
 	return u.Hostname() + u.Path
+}
+
+// Maximum length of a URL: 8192 bytes
+func ValidURL(urlStr string) bool {
+	return len(urlStr) < 8192
 }
